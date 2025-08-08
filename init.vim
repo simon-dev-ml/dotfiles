@@ -7,13 +7,23 @@ Plug 'arcticicestudio/nord-vim'
 Plug 'LnL7/vim-nix'
 
 Plug 'neovim/nvim-lspconfig'
-Plug 'hrsh7th/nvim-compe'
+Plug 'hrsh7th/nvim-cmp'          " Core autocompletion plugin
+Plug 'hrsh7th/cmp-nvim-lsp'      " LSP source for nvim-cmp
+Plug 'hrsh7th/cmp-buffer'        " Buffer source for nvim-cmp
+Plug 'hrsh7th/cmp-path'          " File path source for nvim-cmp
+Plug 'L3MON4D3/LuaSnip'          " Snippets engine
+Plug 'saadparwaiz1/cmp_luasnip'  " Snippets source for nvim-cmp
 
 Plug 'nvim-lua/popup.nvim'
 Plug 'nvim-lua/plenary.nvim'
 Plug 'nvim-telescope/telescope.nvim'
+Plug 'nvim-telescope/telescope-live-grep-args.nvim'
 Plug 'nvim-treesitter/nvim-treesitter', {'do': ':TSUpdate'}
 Plug 'nvim-treesitter/nvim-treesitter-textobjects'
+Plug 'jose-elias-alvarez/null-ls.nvim'
+Plug 'nvim-lua/plenary.nvim' " null-ls dependency
+Plug 'folke/trouble.nvim'
+Plug 'golang/tools/gopls'
 
 call plug#end()
 
@@ -86,10 +96,18 @@ local on_attach = function(client, bufnr)
 
 end
 
+vim.api.nvim_create_autocmd("CursorHold", {
+  pattern = "*",
+  callback = function()
+      vim.diagnostic.open_float(nil, { focusable = false })
+  end,
+})
+
+
 -- Use a loop to conveniently call 'setup' on multiple servers and
 -- map buffer local keybindings when the language server attaches
--- local servers = { "gopls", "rust_analyzer", "tsserver","solargraph", "pylsp", "rnix-lsp" }
-local servers = { "gopls", "rust_analyzer", "tsserver", "solargraph" }
+-- local servers = { "gopls", "rust_analyzer", "ts_ls","solargraph", "pylsp", "rnix-lsp" }
+local servers = { "gopls", "ts_ls", "solargraph" }
 for _, lsp in ipairs(servers) do
   nvim_lsp[lsp].setup {
     on_attach = on_attach,
@@ -98,6 +116,11 @@ for _, lsp in ipairs(servers) do
     }
   }
 end
+
+-- local go_options = { on_attach = on_attach(true), cmd_env = { GOOS = "js", GOARCH = "wasm" } }
+
+-- nvim_lsp.gopls.setup(go_options)
+-- nvim_lsp.golangci_lint_ls.setup(go_options)
 
 require('lspconfig').solargraph.setup({
   settings = {
@@ -108,73 +131,87 @@ require('lspconfig').solargraph.setup({
   }
 })
 
-require'lspconfig'.tsserver.setup{
+require'lspconfig'.ts_ls.setup{
   filetypes = {
     "javascript",
     "typescript"
   },
 }
 
-nvim_lsp.gopls.setup { on_attach = on_attach, cmd_env = { GOOS = "js", GOARCH = "wasm" } }
+nvim_lsp.gopls.setup({
+  on_attach = on_attach,
+  capabilities = require("cmp_nvim_lsp").default_capabilities(),
+})
 
--- config = {
---  tsserver = {
---     filetypes = { 'eruby' }
---   }
--- }
+local cmp = require'cmp'
+
+cmp.setup({
+  snippet = {
+    expand = function(args)
+      require'luasnip'.lsp_expand(args.body)
+    end,
+  },
+  mapping = cmp.mapping.preset.insert({
+    ['<Down>'] = cmp.mapping.select_next_item(), -- Navigate down
+    ['<Up>'] = cmp.mapping.select_prev_item(), -- Navigate up
+    ['<CR>'] = cmp.mapping.confirm({ select = true }), -- Accept suggestion
+  }),
+  sources = cmp.config.sources({
+    { name = 'nvim_lsp' },
+    { name = 'buffer' },
+    { name = 'path' },
+    { name = 'luasnip' },
+  })
+})
 
 --- Set filetype to javascript when opening a .js.erb file
 vim.cmd([[autocmd BufNewFile,BufRead *.js.erb set filetype=javascript]])
 
--- nvim_lsp.config.tsserver = {
---   filetypes = { 'js.erb' },
--- }
+-- Configure Pyright LSP
+local capabilities = require('cmp_nvim_lsp').default_capabilities()
 
--- Check if the tsserver setup function exists before calling it
--- if not nvim_lsp.tsserver then
---     configs.tsserver = {
---         default_config = {
---             cmd = { 'typescript-language-server', '--stdio' },
---             filetypes = { 'javascript', 'javascriptreact', 'javascript.jsx', 'typescript', 'typescriptreact', 'typescript.tsx', 'typescript.tsx', 'typescriptreact', 'typescriptreact.tsx', 'typescriptreact.tsx', 'js.erb' },
---             root_dir = nvim_lsp.util.root_pattern('package.json', 'tsconfig.json', 'jsconfig.json', '.git'),
---         },
---     }
---     nvim_lsp.tsserver = require('nvim_lsp/tsserver')
--- end
+require('lspconfig').pyright.setup({
+  capabilities = capabilities, -- Include completion capabilities
+  on_attach = function(client, bufnr)
+    -- Optional: Add LSP keybindings
+    local bufmap = function(mode, lhs, rhs, opts)
+      opts = opts or {}
+      opts.buffer = bufnr
+      vim.keymap.set(mode, lhs, rhs, opts)
+    end
+    bufmap('n', 'gd', vim.lsp.buf.definition)
+    bufmap('n', 'K', vim.lsp.buf.hover)
+    bufmap('n', '<leader>rn', vim.lsp.buf.rename)
+    bufmap('n', '<leader>ca', vim.lsp.buf.code_action)
+  end,
+})
 
-require'compe'.setup {
-  enabled = true;
-  autocomplete = true;
-  debug = false;
-  min_length = 1;
-  preselect = 'enable';
-  throttle_time = 80;
-  source_timeout = 200;
-  resolve_timeout = 800;
-  incomplete_delay = 400;
-  max_abbr_width = 100;
-  max_kind_width = 100;
-  max_menu_width = 100;
-  documentation = {
-    border = { '', '' ,'', ' ', '', '', '', ' ' }, -- the border option is the same as `|help nvim_open_win|`
-    winhighlight = "NormalFloat:CompeDocumentation,FloatBorder:CompeDocumentationBorder",
-    max_width = 120,
-    min_width = 60,
-    max_height = math.floor(vim.o.lines * 0.3),
-    min_height = 1,
-  };
+local null_ls = require("null-ls")
+null_ls.setup({
+  sources = {},
+})
 
-  source = {
-    path = true;
-    buffer = true;
-    calc = true;
-    nvim_lsp = true;
-    nvim_lua = true;
-    vsnip = true;
-    ultisnips = true;
-    luasnip = true;
-  };
-}
+require("trouble").setup({})
+
+-- Ensure live_grep_args is loaded
+require("telescope").load_extension("live_grep_args")
+
+-- Define keymap
+vim.keymap.set("n", "<leader>fs", function()
+  vim.ui.input({ prompt = "Search text: " }, function(search_term)
+    if not search_term or search_term == "" then return end
+
+    vim.ui.input({ prompt = "Search path: " }, function(search_path)
+      if not search_path or search_path == "" then return end
+
+      require("telescope").extensions.live_grep_args.live_grep_args({
+        default_text = search_term,
+        search_dirs = { search_path },
+        prompt_title = "Search in " .. search_path,
+      })
+    end)
+  end)
+end, { desc = "Telescope: Search text in custom path" })
 
 EOF
 
